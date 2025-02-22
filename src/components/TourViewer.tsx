@@ -3,6 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Scene, Hotspot } from "@/pages/Index";
 import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -27,6 +33,9 @@ export const TourViewer = ({
   const mousePosition = useRef({ x: 0, y: 0 });
   const isAddingHotspot = useRef(false);
   const { toast } = useToast();
+  const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
+  const raycaster = useRef(new THREE.Raycaster());
+  const mouse = useRef(new THREE.Vector2());
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -95,14 +104,17 @@ export const TourViewer = ({
     };
 
     const handleClick = (e: MouseEvent) => {
-      if (!isAddingHotspot.current || !containerRef.current) return;
+      if (!containerRef.current || !sceneRef.current || !cameraRef.current) return;
 
       const rect = containerRef.current.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-      if (cameraRef.current) {
-        const direction = new THREE.Vector3(x, y, 0.5);
+      raycaster.current.setFromCamera(mouse.current, cameraRef.current);
+      const intersects = raycaster.current.intersectObjects(sceneRef.current.children);
+
+      if (isAddingHotspot.current) {
+        const direction = new THREE.Vector3(mouse.current.x, mouse.current.y, 0.5);
         direction.unproject(cameraRef.current);
         direction.sub(cameraRef.current.position).normalize();
         direction.multiplyScalar(500);
@@ -127,9 +139,25 @@ export const TourViewer = ({
         onScenesUpdate(updatedScenes);
         toast({
           title: "Hotspot added",
-          description: "Click on the hotspot to edit its properties",
+          description: "Click on the hotspot to select a target scene",
         });
         isAddingHotspot.current = false;
+      } else if (intersects.length > 0) {
+        const clickedObject = intersects[0].object;
+        const hotspotId = clickedObject.userData.hotspotId;
+        if (hotspotId) {
+          const activeScene = scenes.find((s) => s.id === activeSceneId);
+          const clickedHotspot = activeScene?.hotspots.find(
+            (h) => h.id === hotspotId
+          );
+          if (clickedHotspot) {
+            if (clickedHotspot.targetSceneId) {
+              onSceneChange(clickedHotspot.targetSceneId);
+            } else {
+              setSelectedHotspot(clickedHotspot);
+            }
+          }
+        }
       }
     };
 
@@ -152,7 +180,7 @@ export const TourViewer = ({
         rendererRef.current.dispose();
       }
     };
-  }, [activeSceneId, scenes, onScenesUpdate]);
+  }, [activeSceneId, scenes, onSceneChange, onScenesUpdate]);
 
   const loadScene = (scene: Scene) => {
     if (!sceneRef.current) return;
@@ -184,7 +212,7 @@ export const TourViewer = ({
 
     const geometry = new THREE.SphereGeometry(10, 32, 32);
     const material = new THREE.MeshBasicMaterial({
-      color: 0xff0000,
+      color: hotspot.targetSceneId ? 0x00ff00 : 0xff0000,
       transparent: true,
       opacity: 0.8,
     });
@@ -208,6 +236,31 @@ export const TourViewer = ({
     });
   };
 
+  const handleHotspotLink = (targetSceneId: string) => {
+    if (!selectedHotspot) return;
+
+    const updatedScenes = scenes.map((scene) => {
+      if (scene.id === activeSceneId) {
+        return {
+          ...scene,
+          hotspots: scene.hotspots.map((h) =>
+            h.id === selectedHotspot.id
+              ? { ...h, targetSceneId }
+              : h
+          ),
+        };
+      }
+      return scene;
+    });
+
+    onScenesUpdate(updatedScenes);
+    setSelectedHotspot(null);
+    toast({
+      title: "Hotspot linked",
+      description: "Click the hotspot to navigate to the linked scene",
+    });
+  };
+
   return (
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" />
@@ -221,6 +274,27 @@ export const TourViewer = ({
           <Plus className="h-4 w-4" />
         </Button>
       </div>
+      {selectedHotspot && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>Select Target Scene</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {scenes
+                .filter((scene) => scene.id !== activeSceneId)
+                .map((scene) => (
+                  <DropdownMenuItem
+                    key={scene.id}
+                    onSelect={() => handleHotspotLink(scene.id)}
+                  >
+                    {scene.name}
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
     </div>
   );
 };
