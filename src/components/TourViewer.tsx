@@ -275,18 +275,21 @@ export const TourViewer = ({
         </Button>
       </div>
       {selectedHotspot && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-          <DropdownMenu>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50">
+          <DropdownMenu modal={false} open={true}>
             <DropdownMenuTrigger asChild>
-              <Button>Select Target Scene</Button>
+              <Button variant="secondary" className="bg-white text-black shadow-lg">
+                Select Target Scene
+              </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent>
+            <DropdownMenuContent className="bg-white" align="center">
               {scenes
                 .filter((scene) => scene.id !== activeSceneId)
                 .map((scene) => (
                   <DropdownMenuItem
                     key={scene.id}
                     onSelect={() => handleHotspotLink(scene.id)}
+                    className="cursor-pointer hover:bg-gray-100"
                   >
                     {scene.name}
                   </DropdownMenuItem>
@@ -298,3 +301,4 @@ export const TourViewer = ({
     </div>
   );
 };
+
