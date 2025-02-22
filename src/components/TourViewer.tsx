@@ -36,6 +36,9 @@ export const TourViewer = ({
   const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
   const raycaster = useRef(new THREE.Raycaster());
   const mouse = useRef(new THREE.Vector2());
+  const isTransitioning = useRef(false);
+  const currentSphereRef = useRef<THREE.Mesh>();
+  const nextSphereRef = useRef<THREE.Mesh>();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -77,12 +80,13 @@ export const TourViewer = ({
 
     // Add event listeners for 360° view control
     const handleMouseDown = (e: MouseEvent) => {
+      if (isTransitioning.current) return;
       isMouseDown.current = true;
       mousePosition.current = { x: e.clientX, y: e.clientY };
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isMouseDown.current || !cameraRef.current) return;
+      if (!isMouseDown.current || !cameraRef.current || isTransitioning.current) return;
 
       const deltaX = e.clientX - mousePosition.current.x;
       const deltaY = e.clientY - mousePosition.current.y;
@@ -104,7 +108,7 @@ export const TourViewer = ({
     };
 
     const handleClick = (e: MouseEvent) => {
-      if (!containerRef.current || !sceneRef.current || !cameraRef.current) return;
+      if (!containerRef.current || !sceneRef.current || !cameraRef.current || isTransitioning.current) return;
 
       const rect = containerRef.current.getBoundingClientRect();
       mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -152,7 +156,7 @@ export const TourViewer = ({
           );
           if (clickedHotspot) {
             if (clickedHotspot.targetSceneId) {
-              onSceneChange(clickedHotspot.targetSceneId);
+              handleSceneTransition(clickedHotspot.targetSceneId);
             } else {
               setSelectedHotspot(clickedHotspot);
             }
@@ -197,14 +201,64 @@ export const TourViewer = ({
 
     const geometry = new THREE.SphereGeometry(500, 60, 40);
     geometry.scale(-1, 1, 1);
-    const material = new THREE.MeshBasicMaterial({ map: texture });
+    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
     const sphere = new THREE.Mesh(geometry, material);
+    currentSphereRef.current = sphere;
     sceneRef.current.add(sphere);
 
     // Add hotspots
     scene.hotspots.forEach((hotspot) => {
       addHotspotToScene(hotspot);
     });
+  };
+
+  const handleSceneTransition = (targetSceneId: string) => {
+    if (isTransitioning.current || !sceneRef.current || !currentSphereRef.current) return;
+    
+    isTransitioning.current = true;
+    const targetScene = scenes.find((s) => s.id === targetSceneId);
+    if (!targetScene) return;
+
+    // Create and add the next scene sphere
+    const textureLoader = new THREE.TextureLoader();
+    const texture = textureLoader.load(targetScene.image);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+
+    const geometry = new THREE.SphereGeometry(500, 60, 40);
+    geometry.scale(-1, 1, 1);
+    const material = new THREE.MeshBasicMaterial({ 
+      map: texture, 
+      transparent: true,
+      opacity: 0 
+    });
+    const nextSphere = new THREE.Mesh(geometry, material);
+    nextSphereRef.current = nextSphere;
+    sceneRef.current.add(nextSphere);
+
+    // Animate transition
+    let progress = 0;
+    const animate = () => {
+      progress += 0.02;
+      if (progress >= 1) {
+        // Transition complete
+        if (sceneRef.current && currentSphereRef.current && nextSphereRef.current) {
+          sceneRef.current.remove(currentSphereRef.current);
+          currentSphereRef.current = nextSphereRef.current;
+          nextSphereRef.current = undefined;
+        }
+        isTransitioning.current = false;
+        onSceneChange(targetSceneId);
+        return;
+      }
+
+      if (currentSphereRef.current && nextSphereRef.current) {
+        currentSphereRef.current.material.opacity = 1 - progress;
+        nextSphereRef.current.material.opacity = progress;
+      }
+
+      requestAnimationFrame(animate);
+    };
+    animate();
   };
 
   const addHotspotToScene = (hotspot: Hotspot) => {
@@ -227,6 +281,7 @@ export const TourViewer = ({
   };
 
   const toggleHotspotMode = () => {
+    if (isTransitioning.current) return;
     isAddingHotspot.current = !isAddingHotspot.current;
     toast({
       title: isAddingHotspot.current ? "Adding hotspot" : "Cancelled hotspot addition",
@@ -270,6 +325,7 @@ export const TourViewer = ({
           variant={isAddingHotspot.current ? "secondary" : "outline"}
           size="icon"
           className="rounded-full shadow-lg"
+          disabled={isTransitioning.current}
         >
           <Plus className="h-4 w-4" />
         </Button>
