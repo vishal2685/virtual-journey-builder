@@ -1,9 +1,10 @@
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Scene, Hotspot } from "@/pages/Index";
 import { Button } from "./ui/button";
 import { Plus } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface TourViewerProps {
   scenes: Scene[];
@@ -22,7 +23,10 @@ export const TourViewer = ({
   const sceneRef = useRef<THREE.Scene>();
   const cameraRef = useRef<THREE.PerspectiveCamera>();
   const rendererRef = useRef<THREE.WebGLRenderer>();
+  const isMouseDown = useRef(false);
+  const mousePosition = useRef({ x: 0, y: 0 });
   const isAddingHotspot = useRef(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -31,7 +35,7 @@ export const TourViewer = ({
     sceneRef.current = new THREE.Scene();
     cameraRef.current = new THREE.PerspectiveCamera(
       75,
-      window.innerWidth / window.innerHeight,
+      containerRef.current.clientWidth / containerRef.current.clientHeight,
       0.1,
       1000
     );
@@ -41,6 +45,11 @@ export const TourViewer = ({
       containerRef.current.clientHeight
     );
     containerRef.current.appendChild(rendererRef.current.domElement);
+
+    // Set initial camera position
+    if (cameraRef.current) {
+      cameraRef.current.position.z = 0.1;
+    }
 
     // Load the active scene
     const activeScene = scenes.find((s) => s.id === activeSceneId);
@@ -57,14 +66,93 @@ export const TourViewer = ({
     };
     animate();
 
-    // Cleanup
+    // Add event listeners for 360° view control
+    const handleMouseDown = (e: MouseEvent) => {
+      isMouseDown.current = true;
+      mousePosition.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isMouseDown.current || !cameraRef.current) return;
+
+      const deltaX = e.clientX - mousePosition.current.x;
+      const deltaY = e.clientY - mousePosition.current.y;
+
+      cameraRef.current.rotation.y -= deltaX * 0.005;
+      cameraRef.current.rotation.x -= deltaY * 0.005;
+
+      // Limit vertical rotation
+      cameraRef.current.rotation.x = Math.max(
+        -Math.PI / 2,
+        Math.min(Math.PI / 2, cameraRef.current.rotation.x)
+      );
+
+      mousePosition.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleMouseUp = () => {
+      isMouseDown.current = false;
+    };
+
+    const handleClick = (e: MouseEvent) => {
+      if (!isAddingHotspot.current || !containerRef.current) return;
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      if (cameraRef.current) {
+        const direction = new THREE.Vector3(x, y, 0.5);
+        direction.unproject(cameraRef.current);
+        direction.sub(cameraRef.current.position).normalize();
+        direction.multiplyScalar(500);
+
+        const newHotspot: Hotspot = {
+          id: crypto.randomUUID(),
+          position: { x: direction.x, y: direction.y, z: direction.z },
+          targetSceneId: "",
+          title: "New Hotspot",
+        };
+
+        const updatedScenes = scenes.map((scene) => {
+          if (scene.id === activeSceneId) {
+            return {
+              ...scene,
+              hotspots: [...scene.hotspots, newHotspot],
+            };
+          }
+          return scene;
+        });
+
+        onScenesUpdate(updatedScenes);
+        toast({
+          title: "Hotspot added",
+          description: "Click on the hotspot to edit its properties",
+        });
+        isAddingHotspot.current = false;
+      }
+    };
+
+    const element = containerRef.current;
+    element.addEventListener("mousedown", handleMouseDown);
+    element.addEventListener("mousemove", handleMouseMove);
+    element.addEventListener("mouseup", handleMouseUp);
+    element.addEventListener("mouseleave", handleMouseUp);
+    element.addEventListener("click", handleClick);
+
     return () => {
+      element.removeEventListener("mousedown", handleMouseDown);
+      element.removeEventListener("mousemove", handleMouseMove);
+      element.removeEventListener("mouseup", handleMouseUp);
+      element.removeEventListener("mouseleave", handleMouseUp);
+      element.removeEventListener("click", handleClick);
+
       if (rendererRef.current) {
         containerRef.current?.removeChild(rendererRef.current.domElement);
         rendererRef.current.dispose();
       }
     };
-  }, [activeSceneId, scenes]);
+  }, [activeSceneId, scenes, onScenesUpdate]);
 
   const loadScene = (scene: Scene) => {
     if (!sceneRef.current) return;
@@ -96,7 +184,7 @@ export const TourViewer = ({
 
     const geometry = new THREE.SphereGeometry(10, 32, 32);
     const material = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: 0xff0000,
       transparent: true,
       opacity: 0.8,
     });
@@ -112,6 +200,12 @@ export const TourViewer = ({
 
   const toggleHotspotMode = () => {
     isAddingHotspot.current = !isAddingHotspot.current;
+    toast({
+      title: isAddingHotspot.current ? "Adding hotspot" : "Cancelled hotspot addition",
+      description: isAddingHotspot.current
+        ? "Click anywhere in the scene to add a hotspot"
+        : "Hotspot mode disabled",
+    });
   };
 
   return (
@@ -120,7 +214,7 @@ export const TourViewer = ({
       <div className="absolute bottom-6 right-6 flex gap-2">
         <Button
           onClick={toggleHotspotMode}
-          variant="secondary"
+          variant={isAddingHotspot.current ? "secondary" : "outline"}
           size="icon"
           className="rounded-full shadow-lg"
         >
